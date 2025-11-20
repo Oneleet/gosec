@@ -21,6 +21,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"sort"
 	"strings"
 
@@ -165,6 +166,12 @@ var (
 	// exclude the folders from scan
 	flagDirsExclude arrayFlags
 
+	// CPU profiling
+	flagCPUProfile = flag.String("cpuprofile", "", "write cpu profile to file")
+
+	// tracks whether CPU profiling is active to ensure cleanup before exit
+	isCpuProfilingActive = false
+
 	logger *log.Logger
 )
 
@@ -261,20 +268,20 @@ func loadAnalyzers(include, exclude string, excludeAnalyzers bool) *analyzers.An
 		logger.Println("Excluding all analyzers")
 		filters = append(filters, analyzers.NewAnalyzerFilter(false))
 	} else {
-	if include != "" {
-		logger.Printf("Including analyzers: %s", include)
-		including := strings.Split(include, ",")
-		filters = append(filters, analyzers.NewAnalyzerFilter(false, including...))
-	} else {
-		logger.Println("Including analyzers: default")
-	}
+		if include != "" {
+			logger.Printf("Including analyzers: %s", include)
+			including := strings.Split(include, ",")
+			filters = append(filters, analyzers.NewAnalyzerFilter(false, including...))
+		} else {
+			logger.Println("Including analyzers: default")
+		}
 
-	if exclude != "" {
-		logger.Printf("Excluding analyzers: %s", exclude)
-		excluding := strings.Split(exclude, ",")
-		filters = append(filters, analyzers.NewAnalyzerFilter(true, excluding...))
-	} else {
-		logger.Println("Excluding analyzers: default")
+		if exclude != "" {
+			logger.Printf("Excluding analyzers: %s", exclude)
+			excluding := strings.Split(exclude, ",")
+			filters = append(filters, analyzers.NewAnalyzerFilter(true, excluding...))
+		} else {
+			logger.Println("Excluding analyzers: default")
 		}
 	}
 	return analyzers.Generate(*flagTrackSuppressions, filters...)
@@ -386,6 +393,28 @@ func main() {
 
 	// Parse command line arguments
 	flag.Parse()
+
+	// Start CPU profiling if requested
+	if *flagCPUProfile != "" {
+		cpuProfileFile, err := os.Create(*flagCPUProfile)
+		if err != nil {
+			log.Fatal("could not create CPU profile: ", err)
+		}
+		err = pprof.StartCPUProfile(cpuProfileFile)
+		if err != nil {
+			cpuProfileFile.Close()
+			log.Fatal("could not start CPU profile: ", err)
+		}
+
+		isCpuProfilingActive = true
+		defer func() {
+			if isCpuProfilingActive {
+				pprof.StopCPUProfile()
+				isCpuProfilingActive = false
+			}
+			cpuProfileFile.Close()
+		}()
+	}
 
 	if *flagVersion {
 		fmt.Printf("Version: %s\nGit tag: %s\nBuild date: %s\n", Version, GitTag, BuildDate)
@@ -537,6 +566,12 @@ func main() {
 
 	// Finalize logging
 	logWriter.Close() // #nosec
+
+	// Stop CPU profiling before exit (os.Exit bypasses defers)
+	if isCpuProfilingActive {
+		pprof.StopCPUProfile()
+		isCpuProfilingActive = false
+	}
 
 	exit(issues, errors, *flagNoFail)
 }
