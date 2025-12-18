@@ -1,4 +1,4 @@
-module github.com/securego/gosec/v2
+module github.com/Oneleet/gosec/v2
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.17.0
